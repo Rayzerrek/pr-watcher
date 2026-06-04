@@ -1,26 +1,29 @@
 import { Data, Effect } from "effect";
 import { execFileSync } from "node:child_process";
+import type { RepositoryRef } from "./types.js";
 
-export interface RepositoryRef {
-  readonly owner: string;
-  readonly repo: string;
-}
-
-export class InvalidRepositoryError extends Data.TaggedError("InvalidRepositoryError")<{
+export class InvalidRepositoryError extends Data.TaggedError(
+  "InvalidRepositoryError",
+)<{
   readonly input: string;
   readonly message: string;
 }> {}
 
-export class RepositoryDetectionError extends Data.TaggedError("RepositoryDetectionError")<{
+export class RepositoryDetectionError extends Data.TaggedError(
+  "RepositoryDetectionError",
+)<{
   readonly message: string;
 }> {}
 
-export class CurrentBranchDetectionError extends Data.TaggedError("CurrentBranchDetectionError")<{
+export class CurrentBranchDetectionError extends Data.TaggedError(
+  "CurrentBranchDetectionError",
+)<{
   readonly message: string;
 }> {}
 
 const repositoryRefPattern = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/;
-const httpsGithubRemotePattern = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/;
+const httpsGithubRemotePattern =
+  /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/;
 const sshGithubRemotePattern = /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/;
 
 export const formatRepositoryRef = (repository: RepositoryRef): string =>

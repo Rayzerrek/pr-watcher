@@ -1,7 +1,7 @@
 {
   "name": "pr-watcher",
   "version": "0.1.0",
-  "description": "CLI/TUI watcher for GitHub pull requests and CI checks",
+  "description": "CLI watcher for GitHub pull requests and CI checks",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -15,6 +15,9 @@
     "dist/**/*.d.ts"
   ],
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "main": "dist/cli.js",
   "types": "dist/cli.d.ts",
   "scripts": {
@@ -24,18 +27,10 @@
     "prepare": "pnpm build"
   },
   "dependencies": {
-    "@effect/cli": "^0.75.2",
-    "@effect/platform": "^0.96.1",
-    "@effect/platform-node": "^0.107.0",
-    "@octokit/rest": "^22.0.1",
-    "effect": "^3.21.2",
-    "ink": "^7.0.5",
-    "react": "^19.2.7"
+    "effect": "^3.21.2"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
-    "@types/react": "^19.2.16",
-    "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
   },

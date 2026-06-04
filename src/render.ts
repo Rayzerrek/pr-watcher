@@ -1,19 +1,19 @@
 import { Option } from "effect";
-import type { CiStatus, PullRequest } from "./github.js";
-import { formatRepositoryRef, type RepositoryRef } from "./repo.js";
+import { formatRepositoryRef } from "./repo.js";
+import type { CiStatus, PullRequest, RepositoryRef } from "./types.js";
 
 const ciLabel = (status: CiStatus): string => {
   switch (status) {
     case "passing":
-      return "✅ passing";
+      return "passing";
     case "failing":
-      return "❌ failing";
+      return "failing";
     case "pending":
-      return "🟡 pending";
+      return "pending";
     case "action-required":
-      return "🟠 action required";
+      return "action required";
     case "no-checks":
-      return "⚪ no checks";
+      return "no checks";
   }
 };
 
@@ -32,7 +32,7 @@ export const formatPullRequests = (
     onNone: () => "",
     onSome: (label) => ` (${label})`,
   });
-  const heading = `${formatRepositoryRef(repository)}${contextLabel} — ${pullRequests.length} PR${pullRequests.length === 1 ? "" : "s"}`;
+  const heading = `${formatRepositoryRef(repository)}${contextLabel} - ${pullRequests.length} PR${pullRequests.length === 1 ? "" : "s"}`;
 
   if (pullRequests.length === 0) {
     return `${heading}\n\nBrak PR-ów dla wybranych filtrów.`;
@@ -41,7 +41,7 @@ export const formatPullRequests = (
   const rows = pullRequests.map(
     (pullRequest) =>
       `#${pullRequest.number} ${ciLabel(pullRequest.ciStatus)} ${pullRequest.title}\n` +
-      `  @${authorLabel(pullRequest.author)} ${pullRequest.headBranch} → ${pullRequest.baseBranch}${pullRequest.draft ? " · draft" : ""}\n` +
+      `  @${authorLabel(pullRequest.author)} ${pullRequest.headBranch} -> ${pullRequest.baseBranch}${pullRequest.draft ? " - draft" : ""}\n` +
       `  ${pullRequest.url}`,
   );
 
@@ -55,12 +55,15 @@ export const formatStatusChanges = (
   current.flatMap((pullRequest) => {
     const previousStatus = previous.get(pullRequest.number);
 
-    if (previousStatus === undefined || previousStatus === pullRequest.ciStatus) {
+    if (
+      previousStatus === undefined ||
+      previousStatus === pullRequest.ciStatus
+    ) {
       return [];
     }
 
     return [
-      `#${pullRequest.number} ${pullRequest.title}: ${ciLabel(previousStatus)} → ${ciLabel(
+      `#${pullRequest.number} ${pullRequest.title}: ${ciLabel(previousStatus)} -> ${ciLabel(
         pullRequest.ciStatus,
       )}`,
     ];

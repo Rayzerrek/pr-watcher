@@ -1,46 +1,16 @@
 import { Data, Effect, Option, Schema } from "effect";
-import type { RepositoryRef } from "./repo.js";
 
-export type PullRequestState = "open" | "all";
+import type {
+  CiStatus,
+  PullRequest,
+  PullRequestFilters,
+  PullRequestWithoutCi,
+  RepositoryRef,
+} from "./types.js";
 
-export type CiStatus =
-  | "passing"
-  | "failing"
-  | "pending"
-  | "action-required"
-  | "no-checks";
-
-export interface PullRequestFilters {
-  readonly state: PullRequestState;
-  readonly base: Option.Option<string>;
-  readonly head: Option.Option<string>;
-  readonly author: Option.Option<string>;
-}
-
-export interface PullRequest {
-  readonly number: number;
-  readonly title: string;
-  readonly author: Option.Option<string>;
-  readonly headBranch: string;
-  readonly baseBranch: string;
-  readonly url: string;
-  readonly draft: boolean;
-  readonly headSha: string;
-  readonly ciStatus: CiStatus;
-}
-
-interface PullRequestWithoutCi {
-  readonly number: number;
-  readonly title: string;
-  readonly author: Option.Option<string>;
-  readonly headBranch: string;
-  readonly baseBranch: string;
-  readonly url: string;
-  readonly draft: boolean;
-  readonly headSha: string;
-}
-
-export class GitHubAuthRequiredError extends Data.TaggedError("GitHubAuthRequiredError")<{
+export class GitHubAuthRequiredError extends Data.TaggedError(
+  "GitHubAuthRequiredError",
+)<{
   readonly message: string;
 }> {}
 
@@ -164,7 +134,10 @@ const fetchJson = <A, I, R>(
       try: () => fetch(url, { headers: githubHeaders(token) }),
       catch: (error) =>
         new GitHubNetworkError({
-          message: error instanceof Error ? error.message : "Nie udało się połączyć z GitHub API.",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Nie udało się połączyć z GitHub API.",
         }),
     });
 
@@ -189,7 +162,10 @@ const fetchJson = <A, I, R>(
       try: async (): Promise<unknown> => response.json(),
       catch: (error) =>
         new GitHubNetworkError({
-          message: error instanceof Error ? error.message : "GitHub API zwróciło niepoprawny JSON.",
+          message:
+            error instanceof Error
+              ? error.message
+              : "GitHub API zwróciło niepoprawny JSON.",
         }),
     });
 
@@ -286,15 +262,16 @@ const listCheckRuns = (
 const matchesAuthor = (
   pullRequest: PullRequestWithoutCi,
   author: Option.Option<string>,
-): boolean =>
-  Option.match(author, {
-    onNone: () => true,
-    onSome: (login) =>
-      Option.match(pullRequest.author, {
-        onNone: () => false,
-        onSome: (pullRequestAuthor) => pullRequestAuthor === login,
-      }),
-  });
+): boolean => {
+  if (Option.isNone(author)) {
+    return true;
+  }
+
+  return (
+    Option.isSome(pullRequest.author) &&
+    pullRequest.author.value === author.value
+  );
+};
 
 export const getAuthenticatedLogin = (
   token: Option.Option<string>,
@@ -307,9 +284,11 @@ export const getAuthenticatedLogin = (
     );
   }
 
-  return fetchJson(GitHubUserSchema, githubUrl("/user", new URLSearchParams()), token).pipe(
-    Effect.map((user) => user.login),
-  );
+  return fetchJson(
+    GitHubUserSchema,
+    githubUrl("/user", new URLSearchParams()),
+    token,
+  ).pipe(Effect.map((user) => user.login));
 };
 
 export const listPullRequestsWithCi = (

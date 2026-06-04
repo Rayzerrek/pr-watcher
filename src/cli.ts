@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { Console, Data, Effect, Option } from "effect";
-import { pathToFileURL } from "node:url";
+import { Data, Effect, Option } from "effect";
+import { fileURLToPath } from "node:url";
 
 import {
   getAuthenticatedLogin,
@@ -12,36 +12,19 @@ import {
   type CurrentBranchDetectionError,
   type InvalidRepositoryError,
   type RepositoryDetectionError,
-  type RepositoryRef,
   detectCurrentBranchFromGit,
   detectRepositoryFromGit,
   parseRepositoryRef,
 } from "./repo.js";
 import { watchPullRequests } from "./watch.js";
 
+import type { GitHubError } from "./github.js";
 import type {
-  GitHubError,
+  CliOptions,
+  CliParseResult,
   PullRequestFilters,
-  PullRequestState,
-} from "./github.js";
-
-export type CliMode = "once" | "watch";
-export type AuthorScope = "all-authors" | "mine";
-export type PullRequestFocus = "auto" | "repository" | "current-branch";
-
-export interface CliOptions {
-  readonly repositoryInput: Option.Option<string>;
-  readonly mode: CliMode;
-  readonly focus: PullRequestFocus;
-  readonly authorScope: AuthorScope;
-  readonly state: PullRequestState;
-  readonly base: Option.Option<string>;
-  readonly intervalSeconds: number;
-}
-
-export type CliParseResult =
-  | { readonly _tag: "Help" }
-  | { readonly _tag: "Run"; readonly options: CliOptions };
+  RepositoryRef,
+} from "./types.js";
 
 export class CliParseError extends Data.TaggedError("CliParseError")<{
   readonly message: string;
@@ -203,13 +186,22 @@ Examples:
 
 const resolveRepository = (
   repositoryInput: Option.Option<string>,
-): Effect.Effect<RepositoryRef, InvalidRepositoryError | RepositoryDetectionError> =>
+): Effect.Effect<
+  RepositoryRef,
+  InvalidRepositoryError | RepositoryDetectionError
+> =>
   Option.match(repositoryInput, {
     onNone: () => detectRepositoryFromGit(),
     onSome: (input) => parseRepositoryRef(input),
   });
 
-const commonTrunkBranches = new Set(["main", "master", "develop", "dev", "trunk"]);
+const commonTrunkBranches = new Set([
+  "main",
+  "master",
+  "develop",
+  "dev",
+  "trunk",
+]);
 
 const resolveCurrentBranchFocus = (
   options: CliOptions,
@@ -240,25 +232,22 @@ const resolveFilters = (
   currentBranch: Option.Option<string>,
 ): Effect.Effect<PullRequestFilters, GitHubError> =>
   Effect.gen(function* () {
-    const head = Option.map(currentBranch, (branch) => `${repository.owner}:${branch}`);
+    const head = Option.map(
+      currentBranch,
+      (branch) => `${repository.owner}:${branch}`,
+    );
+    let author: Option.Option<string> = Option.none();
 
-    if (options.authorScope === "all-authors") {
-      return {
-        state: options.state,
-        base: options.base,
-        head,
-        author: Option.none(),
-      };
+    if (options.authorScope === "mine") {
+      const token = yield* readGitHubToken;
+      author = Option.some(yield* getAuthenticatedLogin(token));
     }
-
-    const token = yield* readGitHubToken;
-    const login = yield* getAuthenticatedLogin(token);
 
     return {
       state: options.state,
       base: options.base,
       head,
-      author: Option.some(login),
+      author,
     };
   });
 
@@ -269,14 +258,21 @@ export const runCli = (
     const parsed = yield* parseCliArgs(argv);
 
     if (parsed._tag === "Help") {
-      return yield* Console.log(helpText);
+      return yield* Effect.sync(() => console.log(helpText));
     }
 
     const repository = yield* resolveRepository(parsed.options.repositoryInput);
     const currentBranch = yield* resolveCurrentBranchFocus(parsed.options);
-    const filters = yield* resolveFilters(repository, parsed.options, currentBranch);
+    const filters = yield* resolveFilters(
+      repository,
+      parsed.options,
+      currentBranch,
+    );
 
-    const context = Option.map(currentBranch, (branch) => `current branch: ${branch}`);
+    const context = Option.map(
+      currentBranch,
+      (branch) => `current branch: ${branch}`,
+    );
 
     if (parsed.options.mode === "watch") {
       return yield* watchPullRequests(
@@ -288,7 +284,9 @@ export const runCli = (
     }
 
     const pullRequests = yield* listPullRequestsWithCi(repository, filters);
-    return yield* Console.log(formatPullRequests(repository, pullRequests, context));
+    return yield* Effect.sync(() =>
+      console.log(formatPullRequests(repository, pullRequests, context)),
+    );
   });
 
 const formatError = (error: AppError): string => {
@@ -309,22 +307,28 @@ const formatError = (error: AppError): string => {
 };
 
 const isMainModule = (): boolean => {
-  const entrypoint = process.argv[1];
-  return entrypoint !== undefined && import.meta.url === pathToFileURL(entrypoint).href;
+  const entrypoint = process.argv[1]?.replaceAll("\\", "/");
+  const modulePath = fileURLToPath(import.meta.url).replaceAll("\\", "/");
+
+  return (
+    entrypoint !== undefined &&
+    ((modulePath.endsWith("/cli.js") && entrypoint.endsWith("/cli.js")) ||
+      (modulePath.endsWith("/cli.ts") && entrypoint.endsWith("/cli.ts")))
+  );
 };
 
 if (isMainModule()) {
   void Effect.runPromise(
     runCli(process.argv.slice(2)).pipe(
       Effect.catchAll((error) =>
-        Console.error(formatError(error)).pipe(
-          Effect.zipRight(
-            Effect.sync(() => {
-              process.exitCode = 1;
-            }),
-          ),
-        ),
+        Effect.sync(() => {
+          console.error(formatError(error));
+          process.exitCode = 1;
+        }),
       ),
     ),
-  );
+  ).then(() => {
+    const exitCode = typeof process.exitCode === "number" ? process.exitCode : 0;
+    process.exit(exitCode);
+  });
 }

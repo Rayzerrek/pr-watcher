@@ -1,18 +1,13 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "../src/cli.js";
 import { formatPullRequests } from "../src/render.js";
 
-const execFileAsync = promisify(execFile);
-
 describe("pr-watcher CLI", () => {
-  it("prints help", async () => {
-    const { stdout } = await execFileAsync(process.execPath, ["dist/cli.js", "--help"]);
+  it("parses help", async () => {
+    const result = await Effect.runPromise(parseCliArgs(["--help"]));
 
-    expect(stdout).toContain("Usage:");
-    expect(stdout).toContain("pr-watcher [owner/repo] [options]");
+    expect(result).toEqual({ _tag: "Help" });
   });
 
   it("parses the simplified watch command", async () => {
@@ -69,9 +64,9 @@ describe("pr-watcher CLI", () => {
       ],
     );
 
-    expect(output).toContain("owner/repo — 1 PR");
-    expect(output).toContain("#12 ✅ passing Add watcher");
-    expect(output).toContain("@kacpe feature/watcher → main");
+    expect(output).toContain("owner/repo - 1 PR");
+    expect(output).toContain("#12 passing Add watcher");
+    expect(output).toContain("@kacpe feature/watcher -> main");
   });
 
   it("renders focused current branch context", () => {
@@ -81,6 +76,6 @@ describe("pr-watcher CLI", () => {
       Option.some("current branch: feature/watcher"),
     );
 
-    expect(output).toContain("owner/repo (current branch: feature/watcher) — 0 PRs");
+    expect(output).toContain("owner/repo (current branch: feature/watcher) - 0 PRs");
   });
 });

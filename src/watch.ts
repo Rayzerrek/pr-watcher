@@ -1,13 +1,19 @@
-import { Console, Duration, Effect, Option } from "effect";
-import type { GitHubError, PullRequest, PullRequestFilters } from "./github.js";
+import { Duration, Effect, Option } from "effect";
+import type { GitHubError } from "./github.js";
 import { listPullRequestsWithCi } from "./github.js";
 import { formatPullRequests, formatStatusChanges } from "./render.js";
-import { formatRepositoryRef, type RepositoryRef } from "./repo.js";
+import { formatRepositoryRef } from "./repo.js";
+import type { PullRequest, PullRequestFilters, RepositoryRef } from "./types.js";
 
 const toStatusMap = (
   pullRequests: ReadonlyArray<PullRequest>,
 ): ReadonlyMap<number, PullRequest["ciStatus"]> =>
-  new Map(pullRequests.map((pullRequest) => [pullRequest.number, pullRequest.ciStatus]));
+  new Map(
+    pullRequests.map((pullRequest) => [
+      pullRequest.number,
+      pullRequest.ciStatus,
+    ]),
+  );
 
 export const watchPullRequests = (
   repository: RepositoryRef,
@@ -16,7 +22,7 @@ export const watchPullRequests = (
   context: Option.Option<string> = Option.none(),
 ): Effect.Effect<void, GitHubError> =>
   Effect.gen(function* () {
-    let previous = new Map<number, PullRequest["ciStatus"]>();
+    let previous: ReadonlyMap<number, PullRequest["ciStatus"]> = new Map();
     let isFirstRun = true;
 
     const contextLabel = Option.match(context, {
@@ -24,24 +30,28 @@ export const watchPullRequests = (
       onSome: (label) => ` (${label})`,
     });
 
-    yield* Console.log(
-      `Watching ${formatRepositoryRef(repository)}${contextLabel} every ${intervalSeconds}s. Ctrl+C kończy.`,
+    yield* Effect.sync(() =>
+      console.log(
+        `Watching ${formatRepositoryRef(repository)}${contextLabel} every ${intervalSeconds}s. Ctrl+C kończy.`,
+      ),
     );
 
     while (true) {
       const pullRequests = yield* listPullRequestsWithCi(repository, filters);
 
       if (isFirstRun) {
-        yield* Console.log(formatPullRequests(repository, pullRequests, context));
+        yield* Effect.sync(() =>
+          console.log(formatPullRequests(repository, pullRequests, context)),
+        );
         isFirstRun = false;
       } else {
         const changes = formatStatusChanges(previous, pullRequests);
         if (changes.length > 0) {
-          yield* Console.log(changes.join("\n"));
+          yield* Effect.sync(() => console.log(changes.join("\n")));
         }
       }
 
-      previous = new Map(toStatusMap(pullRequests));
+      previous = toStatusMap(pullRequests);
       yield* Effect.sleep(Duration.seconds(intervalSeconds));
     }
   });
