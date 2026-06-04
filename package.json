@@ -1,13 +1,43 @@
 {
   "name": "pr-watcher",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "Rayzerrek",
+  "version": "0.1.0",
+  "description": "CLI/TUI watcher for GitHub pull requests and CI checks",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rayzerrek/pr-watcher.git"
+  },
+  "bin": {
+    "pr-watcher": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts"
+  ],
+  "type": "module",
+  "main": "dist/cli.js",
+  "types": "dist/cli.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm build && vitest run",
+    "prepare": "pnpm build"
+  },
+  "dependencies": {
+    "@effect/cli": "^0.75.2",
+    "@effect/platform": "^0.96.1",
+    "@effect/platform-node": "^0.107.0",
+    "@octokit/rest": "^22.0.1",
+    "effect": "^3.21.2",
+    "ink": "^7.0.5",
+    "react": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^19.2.16",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
   "packageManager": "pnpm@10.33.0"
 }
