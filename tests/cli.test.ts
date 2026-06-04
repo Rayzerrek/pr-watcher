@@ -25,9 +25,24 @@ describe("pr-watcher CLI", () => {
     }
 
     expect(result.options.mode).toBe("watch");
+    expect(result.options.focus).toBe("repository");
     expect(result.options.intervalSeconds).toBe(30);
     expect(result.options.repositoryInput).toEqual(Option.some("vercel/next.js"));
     expect(result.options.base).toEqual(Option.some("main"));
+  });
+
+  it("parses current branch focus", async () => {
+    const result = await Effect.runPromise(
+      parseCliArgs(["current", "vercel/next.js", "--watch"]),
+    );
+
+    if (result._tag !== "Run") {
+      throw new Error("Expected Run parse result");
+    }
+
+    expect(result.options.mode).toBe("watch");
+    expect(result.options.focus).toBe("current-branch");
+    expect(result.options.repositoryInput).toEqual(Option.some("vercel/next.js"));
   });
 
   it("rejects invalid interval values", async () => {
@@ -57,5 +72,15 @@ describe("pr-watcher CLI", () => {
     expect(output).toContain("owner/repo — 1 PR");
     expect(output).toContain("#12 ✅ passing Add watcher");
     expect(output).toContain("@kacpe feature/watcher → main");
+  });
+
+  it("renders focused current branch context", () => {
+    const output = formatPullRequests(
+      { owner: "owner", repo: "repo" },
+      [],
+      Option.some("current branch: feature/watcher"),
+    );
+
+    expect(output).toContain("owner/repo (current branch: feature/watcher) — 0 PRs");
   });
 });

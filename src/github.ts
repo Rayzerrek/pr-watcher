@@ -13,6 +13,7 @@ export type CiStatus =
 export interface PullRequestFilters {
   readonly state: PullRequestState;
   readonly base: Option.Option<string>;
+  readonly head: Option.Option<string>;
   readonly author: Option.Option<string>;
 }
 
@@ -248,6 +249,10 @@ const listPullRequests = (
 
   if (Option.isSome(filters.base)) {
     params.set("base", filters.base.value);
+  }
+
+  if (Option.isSome(filters.head)) {
+    params.set("head", filters.head.value);
   }
 
   const url = githubUrl(

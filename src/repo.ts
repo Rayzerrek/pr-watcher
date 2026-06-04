@@ -15,6 +15,10 @@ export class RepositoryDetectionError extends Data.TaggedError("RepositoryDetect
   readonly message: string;
 }> {}
 
+export class CurrentBranchDetectionError extends Data.TaggedError("CurrentBranchDetectionError")<{
+  readonly message: string;
+}> {}
+
 const repositoryRefPattern = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/;
 const httpsGithubRemotePattern = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/;
 const sshGithubRemotePattern = /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/;
@@ -82,4 +86,31 @@ export const detectRepositoryFromGit = (): Effect.Effect<
     });
 
     return yield* parseGitHubRemote(remote);
+  });
+
+export const detectCurrentBranchFromGit = (): Effect.Effect<
+  string,
+  CurrentBranchDetectionError
+> =>
+  Effect.gen(function* () {
+    const branch = yield* Effect.try({
+      try: () =>
+        execFileSync("git", ["branch", "--show-current"], {
+          encoding: "utf8",
+        }).trim(),
+      catch: () =>
+        new CurrentBranchDetectionError({
+          message: "Nie wykryłem aktualnego brancha git.",
+        }),
+    });
+
+    if (branch.length === 0) {
+      return yield* Effect.fail(
+        new CurrentBranchDetectionError({
+          message: "Nie wykryłem aktualnego brancha git.",
+        }),
+      );
+    }
+
+    return branch;
   });

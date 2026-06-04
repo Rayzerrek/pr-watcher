@@ -26,8 +26,13 @@ const authorLabel = (author: Option.Option<string>): string =>
 export const formatPullRequests = (
   repository: RepositoryRef,
   pullRequests: ReadonlyArray<PullRequest>,
+  context: Option.Option<string> = Option.none(),
 ): string => {
-  const heading = `${formatRepositoryRef(repository)} — ${pullRequests.length} PR${pullRequests.length === 1 ? "" : "s"}`;
+  const contextLabel = Option.match(context, {
+    onNone: () => "",
+    onSome: (label) => ` (${label})`,
+  });
+  const heading = `${formatRepositoryRef(repository)}${contextLabel} — ${pullRequests.length} PR${pullRequests.length === 1 ? "" : "s"}`;
 
   if (pullRequests.length === 0) {
     return `${heading}\n\nBrak PR-ów dla wybranych filtrów.`;

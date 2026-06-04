@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { NodeRuntime } from "@effect/platform-node";
 import { Console, Data, Effect, Option } from "effect";
 import { pathToFileURL } from "node:url";
 
@@ -10,9 +9,11 @@ import {
 } from "./github.js";
 import { formatPullRequests } from "./render.js";
 import {
+  type CurrentBranchDetectionError,
   type InvalidRepositoryError,
   type RepositoryDetectionError,
   type RepositoryRef,
+  detectCurrentBranchFromGit,
   detectRepositoryFromGit,
   parseRepositoryRef,
 } from "./repo.js";
@@ -26,10 +27,12 @@ import type {
 
 export type CliMode = "once" | "watch";
 export type AuthorScope = "all-authors" | "mine";
+export type PullRequestFocus = "auto" | "repository" | "current-branch";
 
 export interface CliOptions {
   readonly repositoryInput: Option.Option<string>;
   readonly mode: CliMode;
+  readonly focus: PullRequestFocus;
   readonly authorScope: AuthorScope;
   readonly state: PullRequestState;
   readonly base: Option.Option<string>;
@@ -46,6 +49,7 @@ export class CliParseError extends Data.TaggedError("CliParseError")<{
 
 type AppError =
   | CliParseError
+  | CurrentBranchDetectionError
   | InvalidRepositoryError
   | RepositoryDetectionError
   | GitHubError;
@@ -53,6 +57,7 @@ type AppError =
 const defaultOptions = (): CliOptions => ({
   repositoryInput: Option.none(),
   mode: "once",
+  focus: "auto",
   authorScope: "all-authors",
   state: "open",
   base: Option.none(),
@@ -114,6 +119,9 @@ export const parseCliArgs = (
       } else if (arg === "--watch" || arg === "-w") {
         options = { ...options, mode: "watch" };
         index += 1;
+      } else if (arg === "current" || arg === "--current") {
+        options = { ...options, focus: "current-branch" };
+        index += 1;
       } else if (arg === "--mine") {
         options = { ...options, authorScope: "mine" };
         index += 1;
@@ -158,7 +166,11 @@ export const parseCliArgs = (
           }),
         );
       } else {
-        options = { ...options, repositoryInput: Option.some(arg) };
+        options = {
+          ...options,
+          focus: options.focus === "auto" ? "repository" : options.focus,
+          repositoryInput: Option.some(arg),
+        };
         index += 1;
       }
     }
@@ -170,8 +182,10 @@ const helpText = `PR Watcher
 
 Usage:
   pr-watcher [owner/repo] [options]
+  pr-watcher current [owner/repo] [options]
 
 Options:
+  current, --current  Pokaż PR dla aktualnego brancha git
   --watch, -w          Odświeżaj cyklicznie i pokazuj zmiany statusów CI
   --mine              Pokaż tylko moje PR-y (wymaga GITHUB_TOKEN albo GH_TOKEN)
   --all               Pokaż open i closed PR-y
@@ -181,6 +195,7 @@ Options:
 
 Examples:
   pr-watcher
+  pr-watcher current --watch
   pr-watcher vercel/next.js
   pr-watcher vercel/next.js --watch
   pr-watcher --mine --base main
@@ -194,14 +209,44 @@ const resolveRepository = (
     onSome: (input) => parseRepositoryRef(input),
   });
 
-const resolveFilters = (
+const commonTrunkBranches = new Set(["main", "master", "develop", "dev", "trunk"]);
+
+const resolveCurrentBranchFocus = (
   options: CliOptions,
+): Effect.Effect<Option.Option<string>, CurrentBranchDetectionError> => {
+  if (options.focus === "repository") {
+    return Effect.succeed(Option.none());
+  }
+
+  if (options.focus === "current-branch") {
+    return detectCurrentBranchFromGit().pipe(Effect.map(Option.some));
+  }
+
+  if (Option.isSome(options.repositoryInput)) {
+    return Effect.succeed(Option.none());
+  }
+
+  return detectCurrentBranchFromGit().pipe(
+    Effect.map((branch) =>
+      commonTrunkBranches.has(branch) ? Option.none() : Option.some(branch),
+    ),
+    Effect.catchAll(() => Effect.succeed(Option.none())),
+  );
+};
+
+const resolveFilters = (
+  repository: RepositoryRef,
+  options: CliOptions,
+  currentBranch: Option.Option<string>,
 ): Effect.Effect<PullRequestFilters, GitHubError> =>
   Effect.gen(function* () {
+    const head = Option.map(currentBranch, (branch) => `${repository.owner}:${branch}`);
+
     if (options.authorScope === "all-authors") {
       return {
         state: options.state,
         base: options.base,
+        head,
         author: Option.none(),
       };
     }
@@ -212,6 +257,7 @@ const resolveFilters = (
     return {
       state: options.state,
       base: options.base,
+      head,
       author: Option.some(login),
     };
   });
@@ -227,18 +273,22 @@ export const runCli = (
     }
 
     const repository = yield* resolveRepository(parsed.options.repositoryInput);
-    const filters = yield* resolveFilters(parsed.options);
+    const currentBranch = yield* resolveCurrentBranchFocus(parsed.options);
+    const filters = yield* resolveFilters(repository, parsed.options, currentBranch);
+
+    const context = Option.map(currentBranch, (branch) => `current branch: ${branch}`);
 
     if (parsed.options.mode === "watch") {
       return yield* watchPullRequests(
         repository,
         filters,
         parsed.options.intervalSeconds,
+        context,
       );
     }
 
     const pullRequests = yield* listPullRequestsWithCi(repository, filters);
-    return yield* Console.log(formatPullRequests(repository, pullRequests));
+    return yield* Console.log(formatPullRequests(repository, pullRequests, context));
   });
 
 const formatError = (error: AppError): string => {
@@ -246,6 +296,7 @@ const formatError = (error: AppError): string => {
     case "CliParseError":
     case "InvalidRepositoryError":
     case "RepositoryDetectionError":
+    case "CurrentBranchDetectionError":
     case "GitHubAuthRequiredError":
       return error.message;
     case "GitHubNetworkError":
@@ -263,16 +314,17 @@ const isMainModule = (): boolean => {
 };
 
 if (isMainModule()) {
-  runCli(process.argv.slice(2)).pipe(
-    Effect.catchAll((error) =>
-      Console.error(formatError(error)).pipe(
-        Effect.zipRight(
-          Effect.sync(() => {
-            process.exitCode = 1;
-          }),
+  void Effect.runPromise(
+    runCli(process.argv.slice(2)).pipe(
+      Effect.catchAll((error) =>
+        Console.error(formatError(error)).pipe(
+          Effect.zipRight(
+            Effect.sync(() => {
+              process.exitCode = 1;
+            }),
+          ),
         ),
       ),
     ),
-    NodeRuntime.runMain,
   );
 }
