@@ -16,7 +16,12 @@ import {
   detectRepositoryFromGit,
   parseRepositoryRef,
 } from "./repo.js";
-import { watchPullRequests } from "./watch.js";
+import {
+  type CiWaitFailedError,
+  type CiWaitNoPullRequestsError,
+  waitForCi,
+  watchPullRequests,
+} from "./watch.js";
 
 import type { GitHubError } from "./github.js";
 import type {
@@ -26,6 +31,7 @@ import type {
   RepositoryRef,
 } from "./types.js";
 
+/** Error returned when command-line arguments are invalid. */
 export class CliParseError extends Data.TaggedError("CliParseError")<{
   readonly message: string;
 }> {}
@@ -35,7 +41,9 @@ type AppError =
   | CurrentBranchDetectionError
   | InvalidRepositoryError
   | RepositoryDetectionError
-  | GitHubError;
+  | GitHubError
+  | CiWaitFailedError
+  | CiWaitNoPullRequestsError;
 
 const defaultOptions = (): CliOptions => ({
   repositoryInput: Option.none(),
@@ -69,6 +77,22 @@ const parsePositiveInteger = (
   return Effect.succeed(value);
 };
 
+const setMode = (
+  options: CliOptions,
+  mode: CliOptions["mode"],
+  optionName: string,
+): Effect.Effect<CliOptions, CliParseError> => {
+  if (options.mode !== "once" && options.mode !== mode) {
+    return Effect.fail(
+      new CliParseError({
+        message: `Użyj ${optionName} albo ${options.mode === "watch" ? "--watch" : "--wait"}, nie obu naraz.`,
+      }),
+    );
+  }
+
+  return Effect.succeed({ ...options, mode });
+};
+
 const readOptionValue = (
   argv: ReadonlyArray<string>,
   index: number,
@@ -85,6 +109,9 @@ const readOptionValue = (
   return Effect.succeed(value);
 };
 
+/**
+ * Parses CLI arguments into a typed command description without touching git or GitHub.
+ */
 export const parseCliArgs = (
   argv: ReadonlyArray<string>,
 ): Effect.Effect<CliParseResult, CliParseError> =>
@@ -99,8 +126,20 @@ export const parseCliArgs = (
         index += 1;
       } else if (arg === "--help" || arg === "-h") {
         return { _tag: "Help" };
+      } else if (arg === "auth") {
+        if (argv.length > 1) {
+          return yield* Effect.fail(
+            new CliParseError({
+              message: "Komenda auth nie przyjmuje dodatkowych argumentów.",
+            }),
+          );
+        }
+        return { _tag: "Auth" };
       } else if (arg === "--watch" || arg === "-w") {
-        options = { ...options, mode: "watch" };
+        options = yield* setMode(options, "watch", arg);
+        index += 1;
+      } else if (arg === "--wait") {
+        options = yield* setMode(options, "wait", "--wait");
         index += 1;
       } else if (arg === "current" || arg === "--current") {
         options = { ...options, focus: "current-branch" };
@@ -166,22 +205,30 @@ const helpText = `PR Watcher
 Usage:
   pr-watcher [owner/repo] [options]
   pr-watcher current [owner/repo] [options]
+  pr-watcher auth
 
 Options:
   current, --current  Pokaż PR dla aktualnego brancha git
   --watch, -w          Odświeżaj cyklicznie i pokazuj zmiany statusów CI
-  --mine              Pokaż tylko moje PR-y (wymaga GITHUB_TOKEN albo GH_TOKEN)
+  --wait              Czekaj aż CI zakończy się dla wybranych PR-ów
+  --mine              Pokaż tylko moje PR-y (używa tokena env albo gh auth)
   --all               Pokaż open i closed PR-y
   --base <branch>     Filtruj po base branchu
   --interval <sec>    Interwał watch mode w sekundach (domyślnie 15)
   --help, -h          Pokaż pomoc
+
+Auth:
+  pr-watcher automatycznie używa GITHUB_TOKEN, GH_TOKEN albo \`gh auth token\`.
+  Jeśli nie masz autoryzacji, uruchom: gh auth login
 
 Examples:
   pr-watcher
   pr-watcher current --watch
   pr-watcher vercel/next.js
   pr-watcher vercel/next.js --watch
+  pr-watcher current --wait
   pr-watcher --mine --base main
+  pr-watcher auth
 `;
 
 const resolveRepository = (
@@ -251,6 +298,9 @@ const resolveFilters = (
     };
   });
 
+/**
+ * Runs the CLI command, including repository detection, GitHub filtering and rendering.
+ */
 export const runCli = (
   argv: ReadonlyArray<string>,
 ): Effect.Effect<void, AppError> =>
@@ -259,6 +309,31 @@ export const runCli = (
 
     if (parsed._tag === "Help") {
       return yield* Effect.sync(() => console.log(helpText));
+    }
+
+    if (parsed._tag === "Auth") {
+      const token = yield* readGitHubToken;
+
+      if (Option.isNone(token)) {
+        return yield* Effect.sync(() =>
+          console.log(
+            [
+              "Nie znaleziono autoryzacji GitHuba.",
+              "",
+              "Najprościej uruchom:",
+              "  gh auth login",
+              "",
+              "pr-watcher automatycznie użyje potem `gh auth token`.",
+              "Alternatywnie ustaw GITHUB_TOKEN albo GH_TOKEN.",
+            ].join("\n"),
+          ),
+        );
+      }
+
+      const login = yield* getAuthenticatedLogin(token);
+      return yield* Effect.sync(() =>
+        console.log(`Autoryzacja działa. Zalogowano jako @${login}.`),
+      );
     }
 
     const repository = yield* resolveRepository(parsed.options.repositoryInput);
@@ -276,6 +351,15 @@ export const runCli = (
 
     if (parsed.options.mode === "watch") {
       return yield* watchPullRequests(
+        repository,
+        filters,
+        parsed.options.intervalSeconds,
+        context,
+      );
+    }
+
+    if (parsed.options.mode === "wait") {
+      return yield* waitForCi(
         repository,
         filters,
         parsed.options.intervalSeconds,
@@ -303,6 +387,9 @@ const formatError = (error: AppError): string => {
       return `GitHub API zwróciło ${error.status}: ${error.message}`;
     case "GitHubDecodeError":
       return `Nie rozumiem odpowiedzi GitHuba: ${error.message}`;
+    case "CiWaitFailedError":
+    case "CiWaitNoPullRequestsError":
+      return error.message;
   }
 };
 

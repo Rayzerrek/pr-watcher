@@ -35,7 +35,7 @@ export interface PullRequest {
 
 export type PullRequestWithoutCi = Omit<PullRequest, "ciStatus">;
 
-export type CliMode = "once" | "watch";
+export type CliMode = "once" | "watch" | "wait";
 export type AuthorScope = "all-authors" | "mine";
 export type PullRequestFocus = "auto" | "repository" | "current-branch";
 
@@ -51,4 +51,5 @@ export interface CliOptions {
 
 export type CliParseResult =
   | { readonly _tag: "Help" }
+  | { readonly _tag: "Auth" }
   | { readonly _tag: "Run"; readonly options: CliOptions };

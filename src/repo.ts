@@ -2,6 +2,7 @@ import { Data, Effect } from "effect";
 import { execFileSync } from "node:child_process";
 import type { RepositoryRef } from "./types.js";
 
+/** Error returned when a repository reference cannot be parsed as GitHub owner/repo. */
 export class InvalidRepositoryError extends Data.TaggedError(
   "InvalidRepositoryError",
 )<{
@@ -9,12 +10,14 @@ export class InvalidRepositoryError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
+/** Error returned when the current git repository cannot be detected. */
 export class RepositoryDetectionError extends Data.TaggedError(
   "RepositoryDetectionError",
 )<{
   readonly message: string;
 }> {}
 
+/** Error returned when the current git branch cannot be detected. */
 export class CurrentBranchDetectionError extends Data.TaggedError(
   "CurrentBranchDetectionError",
 )<{
@@ -26,9 +29,11 @@ const httpsGithubRemotePattern =
   /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/;
 const sshGithubRemotePattern = /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/;
 
+/** Formats a repository reference as `owner/repo`. */
 export const formatRepositoryRef = (repository: RepositoryRef): string =>
   `${repository.owner}/${repository.repo}`;
 
+/** Parses a user-provided `owner/repo` repository reference. */
 export const parseRepositoryRef = (
   input: string,
 ): Effect.Effect<RepositoryRef, InvalidRepositoryError> => {
@@ -49,6 +54,7 @@ export const parseRepositoryRef = (
   return Effect.succeed({ owner, repo });
 };
 
+/** Parses supported GitHub remote URLs into an `owner/repo` reference. */
 export const parseGitHubRemote = (
   input: string,
 ): Effect.Effect<RepositoryRef, InvalidRepositoryError> => {
@@ -71,6 +77,7 @@ export const parseGitHubRemote = (
   return Effect.succeed({ owner, repo });
 };
 
+/** Detects the current repository from `git remote origin`. */
 export const detectRepositoryFromGit = (): Effect.Effect<
   RepositoryRef,
   RepositoryDetectionError | InvalidRepositoryError
@@ -91,6 +98,7 @@ export const detectRepositoryFromGit = (): Effect.Effect<
     return yield* parseGitHubRemote(remote);
   });
 
+/** Detects the currently checked-out git branch. */
 export const detectCurrentBranchFromGit = (): Effect.Effect<
   string,
   CurrentBranchDetectionError

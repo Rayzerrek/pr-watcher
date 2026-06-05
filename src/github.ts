@@ -1,4 +1,5 @@
 import { Data, Effect, Option, Schema } from "effect";
+import { execFileSync } from "node:child_process";
 
 import type {
   CiStatus,
@@ -8,21 +9,25 @@ import type {
   RepositoryRef,
 } from "./types.js";
 
+/** Error returned when a command needs GitHub auth but no token is available. */
 export class GitHubAuthRequiredError extends Data.TaggedError(
   "GitHubAuthRequiredError",
 )<{
   readonly message: string;
 }> {}
 
+/** Error returned for network-level GitHub API failures. */
 export class GitHubNetworkError extends Data.TaggedError("GitHubNetworkError")<{
   readonly message: string;
 }> {}
 
+/** Error returned for non-2xx GitHub API responses. */
 export class GitHubApiError extends Data.TaggedError("GitHubApiError")<{
   readonly status: number;
   readonly message: string;
 }> {}
 
+/** Error returned when GitHub API JSON does not match the expected schema. */
 export class GitHubDecodeError extends Data.TaggedError("GitHubDecodeError")<{
   readonly message: string;
 }> {}
@@ -88,9 +93,54 @@ const CheckRunsResponseSchema = Schema.Struct({
 type GitHubPullRequest = Schema.Schema.Type<typeof GitHubPullRequestSchema>;
 type CheckRun = Schema.Schema.Type<typeof CheckRunSchema>;
 
-export const readGitHubToken = Effect.sync(() =>
-  Option.fromNullable(process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN),
-);
+const readTokenFromEnvironment = (): Option.Option<string> => {
+  const tokens = [process.env.GITHUB_TOKEN, process.env.GH_TOKEN];
+
+  for (const token of tokens) {
+    const trimmedToken = token?.trim();
+
+    if (trimmedToken !== undefined && trimmedToken.length > 0) {
+      return Option.some(trimmedToken);
+    }
+  }
+
+  return Option.none();
+};
+
+const readTokenFromGitHubCli = (): Option.Option<string> => {
+  try {
+    const token = execFileSync("gh", ["auth", "token"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+
+    return token.length > 0 ? Option.some(token) : Option.none();
+  } catch {
+    return Option.none();
+  }
+};
+
+let cachedGitHubCliToken: Option.Option<Option.Option<string>> = Option.none();
+
+/**
+ * Reads GitHub auth from env first, then falls back to cached GitHub CLI credentials.
+ */
+export const readGitHubToken = Effect.sync(() => {
+  const environmentToken = readTokenFromEnvironment();
+
+  if (Option.isSome(environmentToken)) {
+    return environmentToken;
+  }
+
+  if (Option.isSome(cachedGitHubCliToken)) {
+    return cachedGitHubCliToken.value;
+  }
+
+  const token = readTokenFromGitHubCli();
+  cachedGitHubCliToken = Option.some(token);
+
+  return token;
+});
 
 const githubHeaders = (token: Option.Option<string>): Headers => {
   const headers = new Headers({
@@ -273,13 +323,17 @@ const matchesAuthor = (
   );
 };
 
+/**
+ * Resolves the login for the token used by filters such as `--mine`.
+ */
 export const getAuthenticatedLogin = (
   token: Option.Option<string>,
 ): Effect.Effect<string, GitHubError> => {
   if (Option.isNone(token)) {
     return Effect.fail(
       new GitHubAuthRequiredError({
-        message: "Opcja --mine wymaga GITHUB_TOKEN albo GH_TOKEN.",
+        message:
+          "Opcja --mine wymaga autoryzacji GitHuba. Najprościej uruchom `gh auth login`; pr-watcher automatycznie użyje potem `gh auth token`. Alternatywnie ustaw GITHUB_TOKEN albo GH_TOKEN.",
       }),
     );
   }
@@ -291,6 +345,9 @@ export const getAuthenticatedLogin = (
   ).pipe(Effect.map((user) => user.login));
 };
 
+/**
+ * Lists PRs and enriches each one with a summarized GitHub Checks status.
+ */
 export const listPullRequestsWithCi = (
   repository: RepositoryRef,
   filters: PullRequestFilters,
