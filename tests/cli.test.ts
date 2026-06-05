@@ -89,6 +89,7 @@ describe("pr-watcher CLI", () => {
           draft: false,
           headSha: "abc123",
           ciStatus: "passing",
+          ciChecks: [],
         },
       ],
     );
@@ -96,6 +97,47 @@ describe("pr-watcher CLI", () => {
     expect(output).toContain("owner/repo\n1 PR - 1 passing");
     expect(output).toContain("PASS    #12 Add watcher");
     expect(output).toContain("@kacpe  feature/watcher -> main");
+  });
+
+  it("renders actionable CI checks", () => {
+    const output = formatPullRequests(
+      { owner: "owner", repo: "repo" },
+      [
+        {
+          number: 12,
+          title: "Add watcher",
+          author: Option.some("kacpe"),
+          headBranch: "feature/watcher",
+          baseBranch: "main",
+          url: "https://github.com/owner/repo/pull/12",
+          draft: false,
+          headSha: "abc123",
+          ciStatus: "failing",
+          ciChecks: [
+            {
+              name: "deploy preview",
+              status: "pending",
+              url: Option.none(),
+            },
+            {
+              name: "lint",
+              status: "passing",
+              url: Option.none(),
+            },
+            {
+              name: "test / unit",
+              status: "failing",
+              url: Option.some("https://github.com/owner/repo/runs/1"),
+            },
+          ],
+        },
+      ],
+    );
+
+    expect(output).toContain("  checks:\n    FAIL    test / unit");
+    expect(output).toContain("https://github.com/owner/repo/runs/1");
+    expect(output).toContain("    PENDING deploy preview");
+    expect(output).not.toContain("lint");
   });
 
   it("renders actionable statuses first", () => {
@@ -112,6 +154,7 @@ describe("pr-watcher CLI", () => {
           draft: false,
           headSha: "abc123",
           ciStatus: "passing",
+          ciChecks: [],
         },
         {
           number: 2,
@@ -123,6 +166,7 @@ describe("pr-watcher CLI", () => {
           draft: false,
           headSha: "def456",
           ciStatus: "failing",
+          ciChecks: [],
         },
       ],
     );
@@ -142,6 +186,7 @@ describe("pr-watcher CLI", () => {
       url: "https://github.com/owner/repo/pull/1",
       draft: false,
       headSha: "abc123",
+      ciChecks: [],
     };
 
     expect(evaluateCiWait([])).toEqual({ _tag: "NoPullRequests" });

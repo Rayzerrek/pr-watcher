@@ -14,6 +14,14 @@ export type CiStatus =
   | "action-required"
   | "no-checks";
 
+export type CiCheckStatus = Exclude<CiStatus, "no-checks">;
+
+export interface CiCheck {
+  readonly name: string;
+  readonly status: CiCheckStatus;
+  readonly url: Option.Option<string>;
+}
+
 export interface PullRequestFilters {
   readonly state: PullRequestState;
   readonly base: Option.Option<string>;
@@ -31,9 +39,10 @@ export interface PullRequest {
   readonly draft: boolean;
   readonly headSha: string;
   readonly ciStatus: CiStatus;
+  readonly ciChecks: ReadonlyArray<CiCheck>;
 }
 
-export type PullRequestWithoutCi = Omit<PullRequest, "ciStatus">;
+export type PullRequestWithoutCi = Omit<PullRequest, "ciStatus" | "ciChecks">;
 
 export type CliMode = "once" | "watch" | "wait";
 export type AuthorScope = "all-authors" | "mine";

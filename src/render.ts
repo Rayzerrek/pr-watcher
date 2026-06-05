@@ -1,6 +1,6 @@
 import { Option } from "effect";
 import { formatRepositoryRef } from "./repo.js";
-import type { CiStatus, PullRequest, RepositoryRef } from "./types.js";
+import type { CiCheck, CiStatus, PullRequest, RepositoryRef } from "./types.js";
 
 const statusOrder: ReadonlyMap<CiStatus, number> = new Map([
   ["failing", 0],
@@ -74,6 +74,41 @@ const pluralPullRequests = (count: number): string =>
 
 const statusRank = (status: CiStatus): number => statusOrder.get(status) ?? 99;
 
+const formatActionableCiChecks = (
+  ciChecks: ReadonlyArray<CiCheck>,
+): ReadonlyArray<string> => {
+  const actionableChecks = ciChecks
+    .filter((check) => check.status !== "passing")
+    .map((check, index) => ({ check, index }))
+    .sort((left, right) => {
+      const rankDiff =
+        statusRank(left.check.status) - statusRank(right.check.status);
+
+      return rankDiff === 0 ? left.index - right.index : rankDiff;
+    })
+    .map(({ check }) => check);
+
+  if (actionableChecks.length === 0) {
+    return [];
+  }
+
+  return [
+    "  checks:",
+    ...actionableChecks.map((check) => {
+      const badge = statusColor(
+        check.status,
+        ciBadge(check.status).padEnd(7, " "),
+      );
+      const url = Option.match(check.url, {
+        onNone: () => "",
+        onSome: (checkUrl) => `  ${muted(checkUrl)}`,
+      });
+
+      return `    ${badge} ${check.name}${url}`;
+    }),
+  ];
+};
+
 const sortByActionability = (
   pullRequests: ReadonlyArray<PullRequest>,
 ): ReadonlyArray<PullRequest> =>
@@ -133,11 +168,12 @@ export const formatPullRequests = (
     );
     const draftLabel = pullRequest.draft ? muted(" [draft]") : "";
 
-    return (
-      `${badge} #${pullRequest.number} ${pullRequest.title}${draftLabel}\n` +
-      `  @${authorLabel(pullRequest.author)}  ${pullRequest.headBranch} -> ${pullRequest.baseBranch}\n` +
-      `  ${muted(pullRequest.url)}`
-    );
+    return [
+      `${badge} #${pullRequest.number} ${pullRequest.title}${draftLabel}`,
+      `  @${authorLabel(pullRequest.author)}  ${pullRequest.headBranch} -> ${pullRequest.baseBranch}`,
+      `  ${muted(pullRequest.url)}`,
+      ...formatActionableCiChecks(pullRequest.ciChecks),
+    ].join("\n");
   });
 
   return [heading, countLine, "", ...rows].join("\n");

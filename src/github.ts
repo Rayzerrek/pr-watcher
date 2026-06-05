@@ -2,6 +2,7 @@ import { Data, Effect, Option, Schema } from "effect";
 import { execFileSync } from "node:child_process";
 
 import type {
+  CiCheck,
   CiStatus,
   PullRequest,
   PullRequestFilters,
@@ -81,8 +82,10 @@ const CheckRunStatusSchema = Schema.Literal(
 );
 
 const CheckRunSchema = Schema.Struct({
+  name: Schema.String,
   status: CheckRunStatusSchema,
   conclusion: Schema.NullOr(CheckRunConclusionSchema),
+  html_url: Schema.NullOr(Schema.String),
 });
 
 const CheckRunsResponseSchema = Schema.Struct({
@@ -92,6 +95,11 @@ const CheckRunsResponseSchema = Schema.Struct({
 
 type GitHubPullRequest = Schema.Schema.Type<typeof GitHubPullRequestSchema>;
 type CheckRun = Schema.Schema.Type<typeof CheckRunSchema>;
+
+type CiSummary = {
+  readonly ciStatus: CiStatus;
+  readonly ciChecks: ReadonlyArray<CiCheck>;
+};
 
 const readTokenFromEnvironment = (): Option.Option<string> => {
   const tokens = [process.env.GITHUB_TOKEN, process.env.GH_TOKEN];
@@ -235,6 +243,28 @@ const apiPullRequestToDomain = (
   headSha: pullRequest.head.sha,
 });
 
+const hasFailingConclusion = (checkRun: CheckRun): boolean =>
+  checkRun.conclusion === "cancelled" ||
+  checkRun.conclusion === "failure" ||
+  checkRun.conclusion === "startup_failure" ||
+  checkRun.conclusion === "timed_out";
+
+const checkRunToCiCheckStatus = (checkRun: CheckRun): CiCheck["status"] => {
+  if (checkRun.status !== "completed") {
+    return "pending";
+  }
+
+  if (checkRun.conclusion === "action_required") {
+    return "action-required";
+  }
+
+  if (hasFailingConclusion(checkRun)) {
+    return "failing";
+  }
+
+  return "passing";
+};
+
 const summarizeCheckRuns = (checkRuns: ReadonlyArray<CheckRun>): CiStatus => {
   if (checkRuns.length === 0) {
     return "no-checks";
@@ -248,20 +278,21 @@ const summarizeCheckRuns = (checkRuns: ReadonlyArray<CheckRun>): CiStatus => {
     return "action-required";
   }
 
-  if (
-    checkRuns.some(
-      (checkRun) =>
-        checkRun.conclusion === "cancelled" ||
-        checkRun.conclusion === "failure" ||
-        checkRun.conclusion === "startup_failure" ||
-        checkRun.conclusion === "timed_out",
-    )
-  ) {
+  if (checkRuns.some(hasFailingConclusion)) {
     return "failing";
   }
 
   return "passing";
 };
+
+const summarizeCi = (checkRuns: ReadonlyArray<CheckRun>): CiSummary => ({
+  ciStatus: summarizeCheckRuns(checkRuns),
+  ciChecks: checkRuns.map((checkRun) => ({
+    name: checkRun.name,
+    status: checkRunToCiCheckStatus(checkRun),
+    url: Option.fromNullable(checkRun.html_url),
+  })),
+});
 
 const listPullRequests = (
   repository: RepositoryRef,
@@ -295,7 +326,7 @@ const listCheckRuns = (
   repository: RepositoryRef,
   headSha: string,
   token: Option.Option<string>,
-): Effect.Effect<CiStatus, GitHubError> => {
+): Effect.Effect<CiSummary, GitHubError> => {
   const params = new URLSearchParams({
     per_page: "50",
   });
@@ -305,7 +336,7 @@ const listCheckRuns = (
   );
 
   return fetchJson(CheckRunsResponseSchema, url, token).pipe(
-    Effect.map((response) => summarizeCheckRuns(response.check_runs)),
+    Effect.map((response) => summarizeCi(response.check_runs)),
   );
 };
 
@@ -363,7 +394,7 @@ export const listPullRequestsWithCi = (
       filteredPullRequests,
       (pullRequest) =>
         listCheckRuns(repository, pullRequest.headSha, token).pipe(
-          Effect.map((ciStatus) => ({ ...pullRequest, ciStatus })),
+          Effect.map((ciSummary) => ({ ...pullRequest, ...ciSummary })),
         ),
       { concurrency: 4 },
     );
